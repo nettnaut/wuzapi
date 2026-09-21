@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/rs/zerolog/log"
@@ -273,6 +274,24 @@ func (ss *stdioServer) routeRequest(req *jsonRpcRequest) {
 	case "session.history":
 		httpMethod = "GET"
 		httpPath = "/session/history"
+		// Forward optional query parameters
+		if chatJID, ok := req.Params["chat_jid"].(string); ok && chatJID != "" {
+			httpPath += "?chat_jid=" + chatJID
+		}
+		if count, ok := req.Params["count"].(float64); ok {
+			if strings.Contains(httpPath, "?") {
+				httpPath += fmt.Sprintf("&count=%d", int(count))
+			} else {
+				httpPath += fmt.Sprintf("?count=%d", int(count))
+			}
+		}
+		if msgID, ok := req.Params["oldest_msg_id"].(string); ok && msgID != "" {
+			if strings.Contains(httpPath, "?") {
+				httpPath += "&oldest_msg_id=" + msgID
+			} else {
+				httpPath += "?oldest_msg_id=" + msgID
+			}
+		}
 	case "session.history.set":
 		httpMethod = "POST"
 		httpPath = "/session/history"
