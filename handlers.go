@@ -6952,15 +6952,17 @@ func (s *server) GetHistory() http.HandlerFunc {
 			var query string
 			if s.db.DriverName() == "postgres" {
 				query = `
-					SELECT user_id, chat_jid, MAX(timestamp) as last_message_time
-					FROM message_history 
-					GROUP BY user_id, chat_jid 
+					SELECT user_id, chat_jid,
+					       MAX(COALESCE(datajson::json->>'Info'->>'Timestamp', timestamp::text)) as last_message_time
+					FROM message_history
+					GROUP BY user_id, chat_jid
 					ORDER BY user_id, last_message_time DESC`
 			} else { // sqlite
 				query = `
-					SELECT user_id, chat_jid, MAX(timestamp) as last_message_time
-					FROM message_history 
-					GROUP BY user_id, chat_jid 
+					SELECT user_id, chat_jid,
+					       MAX(COALESCE(json_extract(datajson, '$.Info.Timestamp'), timestamp)) as last_message_time
+					FROM message_history
+					GROUP BY user_id, chat_jid
 					ORDER BY user_id, last_message_time DESC`
 			}
 
