@@ -6952,24 +6952,45 @@ func (s *server) GetHistory() http.HandlerFunc {
 			var query string
 			if s.db.DriverName() == "postgres" {
 				query = `
-					SELECT user_id, chat_jid,
-					       MAX(COALESCE(datajson::json->>'Info'->>'Timestamp', timestamp::text)) as last_message_time
+					SELECT DISTINCT ON (user_id, chat_jid)
+					       user_id, chat_jid,
+					       COALESCE(datajson::json->>'Info'->>'Timestamp', timestamp::text) as last_message_time,
+					       COALESCE(text_content, '') as last_text
 					FROM message_history
-					GROUP BY user_id, chat_jid
-					ORDER BY user_id, last_message_time DESC`
+					ORDER BY user_id, chat_jid, last_message_time DESC`
 			} else { // sqlite
 				query = `
-					SELECT user_id, chat_jid,
-					       MAX(COALESCE(json_extract(datajson, '$.Info.Timestamp'), timestamp)) as last_message_time
-					FROM message_history
-					GROUP BY user_id, chat_jid
-					ORDER BY user_id, last_message_time DESC`
+					SELECT m.user_id, m.chat_jid,
+					       CASE
+					           WHEN m.datajson IS NOT NULL AND m.datajson != '' AND json_valid(m.datajson)
+					           THEN COALESCE(json_extract(m.datajson, '$.Info.Timestamp'), m.timestamp)
+					           ELSE m.timestamp
+					       END as last_message_time,
+					       COALESCE(m.text_content, '') as last_text
+					FROM message_history m
+					INNER JOIN (
+					    SELECT user_id, chat_jid, MAX(CASE
+					        WHEN datajson IS NOT NULL AND datajson != '' AND json_valid(datajson)
+					        THEN COALESCE(json_extract(datajson, '$.Info.Timestamp'), timestamp)
+					        ELSE timestamp
+					    END) as max_time
+					    FROM message_history
+					    GROUP BY user_id, chat_jid
+					) latest ON m.user_id = latest.user_id
+					        AND m.chat_jid = latest.chat_jid
+					        AND CASE
+					            WHEN m.datajson IS NOT NULL AND m.datajson != '' AND json_valid(m.datajson)
+					            THEN COALESCE(json_extract(m.datajson, '$.Info.Timestamp'), m.timestamp)
+					            ELSE m.timestamp
+					        END = latest.max_time
+					ORDER BY m.user_id, last_message_time DESC`
 			}
 
 			type ChatMapping struct {
 				UserID          string `json:"user_id" db:"user_id"`
 				ChatJID         string `json:"chat_jid" db:"chat_jid"`
 				LastMessageTime string `json:"last_message_time" db:"last_message_time"`
+				LastText        string `json:"last_text" db:"last_text"`
 			}
 
 			var mappings []ChatMapping
@@ -6979,14 +7000,22 @@ func (s *server) GetHistory() http.HandlerFunc {
 				return
 			}
 
-			// Build the response map with chats ordered by most recent message
+			// Deduplicate (join may produce multiple rows per chat)
 			type ChatInfo struct {
 				ChatJID     string `json:"chat_jid"`
 				LastUpdated string `json:"last_updated"`
+				LastText    string `json:"last_text,omitempty"`
 			}
 
+			seen := make(map[string]bool)
 			result := make(map[string][]ChatInfo)
 			for _, mapping := range mappings {
+				key := mapping.UserID + "|" + mapping.ChatJID
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+
 				// Parse the timestamp and format it properly to remove monotonic clock info
 				var formattedTime string
 				if parsedTime, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", mapping.LastMessageTime); err == nil {
@@ -7001,6 +7030,7 @@ func (s *server) GetHistory() http.HandlerFunc {
 				chatInfo := ChatInfo{
 					ChatJID:     mapping.ChatJID,
 					LastUpdated: formattedTime,
+					LastText:    mapping.LastText,
 				}
 				result[mapping.UserID] = append(result[mapping.UserID], chatInfo)
 			}
