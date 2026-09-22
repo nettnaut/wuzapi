@@ -1381,13 +1381,20 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 							continue
 						}
 
-						// Determine sender - never use "me", always use actual JID
-						// Use GetFromMe() from MessageKey to determine if message is from account owner
-						// This is more reliable than checking GetParticipant()
+						// Determine sender - never use "me", always use actual JID.
+						// For group chats, prefer GetParticipant() over GetFromMe()
+						// because history sync often sets FromMe=true for ALL messages,
+						// making the flag unreliable for sender determination.
 						isFromMe := messageKey.GetFromMe()
 						var senderJID string
 
-						if isFromMe {
+						participantJID := messageKey.GetParticipant()
+						if (chatJID.Server == types.GroupServer || chatJID.Server == types.BroadcastServer) && participantJID != "" {
+							// Group message with participant info — use it directly
+							senderJID = participantJID
+							// Re-derive isFromMe from the participant JID
+							isFromMe = participantJID == accountOwnerJID
+						} else if isFromMe {
 							// Message from account owner
 							senderJID = accountOwnerJID
 							if senderJID == "" {
@@ -1396,10 +1403,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 								log.Warn().Str("messageID", messageID).Msg("accountOwnerJID is not available for a message from me, using 'me' as senderJID")
 							}
 						} else {
-							// Message from someone else
-							participantJID := messageKey.GetParticipant()
+							// Message from someone else (direct chat)
 							if chatJID.Server == types.GroupServer || chatJID.Server == types.BroadcastServer {
-								// Group message: use participant JID
+								// Group message without participant — use participant from key
 								senderJID = participantJID
 							} else {
 								// Direct message: sender is the chat itself (chat_jid)
@@ -1494,29 +1500,13 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						}
 
 						// Parse sender JID for MessageInfo
+						// senderJID was already resolved above (participant-first for groups)
 						var senderJIDForInfo types.JID
-						if isFromMe {
-							if accountOwnerJID != "" {
-								var pErr error
-								senderJIDForInfo, pErr = types.ParseJID(accountOwnerJID)
-								if pErr != nil {
-									log.Warn().Err(pErr).Str("accountOwnerJID", accountOwnerJID).Msg("Failed to parse account owner JID in HistorySync")
-								}
-							}
-						} else {
-							if chatJID.Server == types.GroupServer || chatJID.Server == types.BroadcastServer {
-								// Group: use participant JID
-								participant := messageKey.GetParticipant()
-								if participant != "" {
-									var pErr error
-									senderJIDForInfo, pErr = types.ParseJID(participant)
-									if pErr != nil {
-										log.Warn().Err(pErr).Str("participantJID", participant).Msg("Failed to parse participant JID in HistorySync")
-									}
-								}
-							} else {
-								// Direct message: sender is the chat
-								senderJIDForInfo = chatJID
+						if senderJID != "" && senderJID != "me" {
+							var pErr error
+							senderJIDForInfo, pErr = types.ParseJID(senderJID)
+							if pErr != nil {
+								log.Warn().Err(pErr).Str("senderJID", senderJID).Msg("Failed to parse sender JID in HistorySync")
 							}
 						}
 
