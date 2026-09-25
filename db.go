@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -154,53 +155,81 @@ func (s *server) saveMessageToHistory(userID, chatJID, senderJID, messageID, mes
 }
 
 func (s *server) trimMessageHistory(userID, chatJID string, limit int) error {
-	var queryHistory, querySecrets string
-
 	if s.db.DriverName() == "postgres" {
-		queryHistory = `
-            DELETE FROM message_history
-            WHERE id IN (
-                SELECT id FROM message_history
-                WHERE user_id = $1 AND chat_jid = $2
-                ORDER BY timestamp DESC
-                OFFSET $3
-            )`
-
-		querySecrets = `
+		// whatsmeow's store shares this database, so secrets can be
+		// trimmed with a subquery. A secrets failure must not block the
+		// history trim, which is the part that enforces the limit.
+		secretsErr := s.execTrim(`
             DELETE FROM whatsmeow_message_secrets
             WHERE message_id IN (
                 SELECT message_id FROM message_history
                 WHERE user_id = $1 AND chat_jid = $2
                 ORDER BY timestamp DESC
                 OFFSET $3
-            )`
-	} else { // sqlite
-		queryHistory = `
+            )`, "message secrets", userID, chatJID, limit)
+		historyErr := s.execTrim(`
+            DELETE FROM message_history
+            WHERE id IN (
+                SELECT id FROM message_history
+                WHERE user_id = $1 AND chat_jid = $2
+                ORDER BY timestamp DESC
+                OFFSET $3
+            )`, "message history", userID, chatJID, limit)
+		return errors.Join(historyErr, secretsErr)
+	}
+
+	// SQLite: whatsmeow's store is a separate file (main.db), so collect
+	// the IDs past the limit here and delete their secrets there.
+	var ids []string
+	if err := s.db.Select(&ids, `
+            SELECT message_id FROM message_history
+            WHERE user_id = ? AND chat_jid = ?
+            ORDER BY timestamp DESC
+            LIMIT -1 OFFSET ?`, userID, chatJID, limit); err != nil {
+		return fmt.Errorf("failed to find messages to trim: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var secretsErr error
+	if s.storeDB != nil {
+		secretsErr = deleteMessageSecrets(s.storeDB, ids)
+	}
+	historyErr := s.execTrim(`
             DELETE FROM message_history
             WHERE id IN (
                 SELECT id FROM message_history
                 WHERE user_id = ? AND chat_jid = ?
                 ORDER BY timestamp DESC
                 LIMIT -1 OFFSET ?
-            )`
+            )`, "message history", userID, chatJID, limit)
+	return errors.Join(historyErr, secretsErr)
+}
 
-		querySecrets = `
-            DELETE FROM whatsmeow_message_secrets
-            WHERE message_id IN (
-                SELECT message_id FROM message_history
-                WHERE user_id = ? AND chat_jid = ?
-                ORDER BY timestamp DESC
-                LIMIT -1 OFFSET ?
-            )`
+func (s *server) execTrim(query, what, userID, chatJID string, limit int) error {
+	if _, err := s.db.Exec(query, userID, chatJID, limit); err != nil {
+		return fmt.Errorf("failed to trim %s: %w", what, err)
 	}
+	return nil
+}
 
-	if _, err := s.db.Exec(querySecrets, userID, chatJID, limit); err != nil {
-		return fmt.Errorf("failed to trim message secrets: %w", err)
+// deleteMessageSecrets removes whatsmeow_message_secrets rows for ids from
+// the whatsmeow store, in chunks to stay under SQLite's variable limit
+// (the first trim after raising a low limit can cover thousands of rows).
+func deleteMessageSecrets(store *sqlx.DB, ids []string) error {
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := min(start+chunk, len(ids))
+		query, args, err := sqlx.In(
+			`DELETE FROM whatsmeow_message_secrets WHERE message_id IN (?)`,
+			ids[start:end])
+		if err != nil {
+			return fmt.Errorf("failed to build message secrets trim: %w", err)
+		}
+		if _, err := store.Exec(store.Rebind(query), args...); err != nil {
+			return fmt.Errorf("failed to trim message secrets: %w", err)
+		}
 	}
-
-	if _, err := s.db.Exec(queryHistory, userID, chatJID, limit); err != nil {
-		return fmt.Errorf("failed to trim message history: %w", err)
-	}
-
 	return nil
 }

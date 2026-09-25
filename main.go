@@ -43,6 +43,10 @@ type server struct {
 	router *mux.Router
 	exPath string
 	mode   ServerMode
+	// storeDB is the whatsmeow store (main.db) when it is a separate
+	// database from db, i.e. on SQLite. nil on Postgres, where both
+	// live in the same database.
+	storeDB *sqlx.DB
 }
 
 // Replace the global variables
@@ -520,6 +524,16 @@ func main() {
 		db:     db,
 		exPath: exPath,
 		mode:   serverMode,
+	}
+	if config.Type != "postgres" {
+		// whatsmeow's store is a separate SQLite file; trimMessageHistory
+		// needs it to delete the secrets of trimmed messages.
+		storeDB, err := sqlx.Open("sqlite", storeConnStr)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to open whatsmeow store for history trimming")
+		} else {
+			s.storeDB = storeDB
+		}
 	}
 	s.routes()
 
