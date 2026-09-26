@@ -659,7 +659,9 @@ func (s *server) SendNotification(method string, params map[string]interface{}) 
 	}
 	defer body.Close()
 	if err = writeMediaNotification(os.Stdout, body); err != nil {
-		log.Error().Err(err).Msg("Failed to write notification")
+		log.Error().Err(err).Str("method", method).Msg("Failed to write notification")
+	} else {
+		log.Debug().Str("method", method).Msg("Sent stdio notification")
 	}
 }
 
