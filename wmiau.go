@@ -1111,6 +1111,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			}
 		}
 
+		localMediaPath := "" // set by media_delivery=local
 		if !*skipMedia {
 
 			isIncoming := !evt.Info.IsFromMe
@@ -1125,13 +1126,13 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			}
 
 			if img := evt.Message.GetImageMessage(); img != nil {
-				mycli.processMedia(img, img.GetMimetype(), ".jpg",
+				localMediaPath = mycli.processMedia(img, img.GetMimetype(), ".jpg",
 					downloadTimeoutImage, isIncoming, chatJID,
 					evt.Info.ID, s3cfg, postmap, nil)
 			}
 
 			if audio := evt.Message.GetAudioMessage(); audio != nil {
-				mycli.processMedia(audio, audio.GetMimetype(), ".ogg",
+				localMediaPath = mycli.processMedia(audio, audio.GetMimetype(), ".ogg",
 					downloadTimeoutAudio, isIncoming, chatJID,
 					evt.Info.ID, s3cfg, postmap, nil)
 			}
@@ -1141,19 +1142,19 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				if doc.FileName != nil {
 					ext = filepath.Ext(*doc.FileName)
 				}
-				mycli.processMedia(doc, doc.GetMimetype(), ext,
+				localMediaPath = mycli.processMedia(doc, doc.GetMimetype(), ext,
 					downloadTimeoutDocument, isIncoming, chatJID,
 					evt.Info.ID, s3cfg, postmap, nil)
 			}
 
 			if video := evt.Message.GetVideoMessage(); video != nil {
-				mycli.processMedia(video, video.GetMimetype(), ".mp4",
+				localMediaPath = mycli.processMedia(video, video.GetMimetype(), ".mp4",
 					downloadTimeoutVideo, isIncoming, chatJID,
 					evt.Info.ID, s3cfg, postmap, nil)
 			}
 
 			if sticker := evt.Message.GetStickerMessage(); sticker != nil {
-				mycli.processMedia(sticker, sticker.GetMimetype(), ".webp",
+				localMediaPath = mycli.processMedia(sticker, sticker.GetMimetype(), ".webp",
 					downloadTimeoutSticker, isIncoming, chatJID,
 					evt.Info.ID, s3cfg, postmap, map[string]interface{}{
 						"isSticker":       true,
@@ -1174,7 +1175,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			historyLimit = 0
 		}
 
-		if historyLimit > 0 {
+		if historyEnabled(historyLimit) {
 			messageType := "text"
 			textContent := ""
 			mediaLink := ""
@@ -1268,6 +1269,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				if url, ok := s3Data["url"].(string); ok {
 					mediaLink = url
 				}
+			}
+			if mediaLink == "" {
+				mediaLink = localMediaPath
 			}
 
 			// Only save if there's meaningful content (including delete messages)

@@ -154,7 +154,14 @@ func (s *server) saveMessageToHistory(userID, chatJID, senderJID, messageID, mes
 	return nil
 }
 
+// historyEnabled reports whether messages are stored for a user's history
+// limit: 0 = off, >0 = keep the newest N per chat, <0 = keep everything.
+func historyEnabled(limit int) bool { return limit != 0 }
+
 func (s *server) trimMessageHistory(userID, chatJID string, limit int) error {
+	if limit <= 0 {
+		return nil // unlimited (or off): nothing to trim
+	}
 	if s.db.DriverName() == "postgres" {
 		// whatsmeow's store shares this database, so secrets can be
 		// trimmed with a subquery. A secrets failure must not block the

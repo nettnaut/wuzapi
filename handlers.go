@@ -6453,8 +6453,8 @@ func (s *server) SetHistory() http.HandlerFunc {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("provide history or days_to_sync_history"))
 			return
 		}
-		if config.History != nil && *config.History < 0 {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("history cannot be negative"))
+		if config.History != nil && *config.History < -1 {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("history must be -1 (unlimited), 0 (off) or a positive limit"))
 			return
 		}
 		if config.Days != nil {
@@ -6642,8 +6642,8 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 		}
 
 		// Validate media_delivery
-		if t.MediaDelivery != "" && t.MediaDelivery != "base64" && t.MediaDelivery != "s3" && t.MediaDelivery != "both" {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("media_delivery must be 'base64', 's3', or 'both'"))
+		if t.MediaDelivery != "" && t.MediaDelivery != "base64" && t.MediaDelivery != "s3" && t.MediaDelivery != "both" && t.MediaDelivery != "local" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("media_delivery must be 'base64', 's3', 'both' or 'local'"))
 			return
 		}
 
@@ -7090,7 +7090,7 @@ func (s *server) GetHistory() http.HandlerFunc {
 
 // save outgoing message to history
 func (s *server) saveOutgoingMessageToHistory(userID, chatJID, messageID, messageType, textContent, mediaLink string, historyLimit int) {
-	if historyLimit > 0 {
+	if historyEnabled(historyLimit) {
 		err := s.saveMessageToHistory(userID, chatJID, "me", messageID, messageType, textContent, mediaLink, "", "")
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to save outgoing message to history")
