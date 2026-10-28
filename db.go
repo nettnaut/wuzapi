@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -110,7 +112,8 @@ func initializeSQLite(config DatabaseConfig) (*sqlx.DB, error) {
 	}
 
 	dbPath := filepath.ToSlash(filepath.Join(config.Path, "users.db"))
-	db, err := sqlx.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)")
+	db, err := sqlx.Open("sqlite", fmt.Sprintf("%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)",
+		dbPath, sqliteBusyTimeoutMs))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
@@ -136,6 +139,41 @@ type HistoryMessage struct {
 	DataJson        string    `json:"data_json" db:"datajson"`
 }
 
+// SQLite allows one writer at a time and its busy handler is not fair. Under a
+// burst (HistorySync batches saved from parallel goroutines while live messages
+// arrive, each commit an fsync on a slow disk) an unlucky writer can wait out
+// the whole busy_timeout, and its message is silently dropped from history.
+// History writes are therefore serialised in-process, and a BUSY that still
+// happens (another process, a checkpoint) is retried: the insert is idempotent.
+var (
+	sqliteBusyTimeoutMs = 10000
+	historyWriteMu      sync.Mutex
+	historyBusyRetries  = []time.Duration{250 * time.Millisecond, time.Second, 3 * time.Second}
+)
+
+func isSQLiteBusy(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "database is locked"))
+}
+
+// execHistoryWrite runs one history write, serialised and BUSY-retried on SQLite.
+func (s *server) execHistoryWrite(query string, args ...interface{}) error {
+	if s.db.DriverName() != "sqlite" {
+		_, err := s.db.Exec(query, args...)
+		return err
+	}
+	historyWriteMu.Lock()
+	defer historyWriteMu.Unlock()
+	_, err := s.db.Exec(query, args...)
+	for _, wait := range historyBusyRetries {
+		if !isSQLiteBusy(err) {
+			break
+		}
+		time.Sleep(wait)
+		_, err = s.db.Exec(query, args...)
+	}
+	return err
+}
+
 func (s *server) saveMessageToHistory(userID, chatJID, senderJID, messageID, messageType, textContent, mediaLink, quotedMessageID, dataJson string) error {
 	// Idempotent insert: HistorySync batches (and reconnects) routinely redeliver
 	// messages already persisted via the live Message event. The (user_id, message_id)
@@ -147,7 +185,7 @@ func (s *server) saveMessageToHistory(userID, chatJID, senderJID, messageID, mes
 	query := s.db.Rebind(`INSERT INTO message_history (user_id, chat_jid, sender_jid, message_id, timestamp, message_type, text_content, media_link, quoted_message_id, datajson)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT (user_id, message_id) DO NOTHING`)
-	_, err := s.db.Exec(query, userID, chatJID, senderJID, messageID, time.Now(), messageType, textContent, mediaLink, quotedMessageID, dataJson)
+	err := s.execHistoryWrite(query, userID, chatJID, senderJID, messageID, time.Now(), messageType, textContent, mediaLink, quotedMessageID, dataJson)
 	if err != nil {
 		return fmt.Errorf("failed to save message to history: %w", err)
 	}
@@ -215,7 +253,7 @@ func (s *server) trimMessageHistory(userID, chatJID string, limit int) error {
 }
 
 func (s *server) execTrim(query, what, userID, chatJID string, limit int) error {
-	if _, err := s.db.Exec(query, userID, chatJID, limit); err != nil {
+	if err := s.execHistoryWrite(query, userID, chatJID, limit); err != nil {
 		return fmt.Errorf("failed to trim %s: %w", what, err)
 	}
 	return nil
