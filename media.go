@@ -34,7 +34,7 @@ func (mycli *MyClient) processMedia(
 	s3cfg mediaS3Config,
 	postmap map[string]interface{},
 	extraKeys map[string]interface{},
-) {
+) (localPath string) {
 	ctx, cancel, err := mediaContext(context.Background())
 	if err != nil {
 		log.Error().Err(err).Msg("Could not initialize media storage")
@@ -72,12 +72,18 @@ func (mycli *MyClient) processMedia(
 		log.Error().Err(err).Msg("Failed to download media")
 		return
 	}
+	if s3cfg.MediaDelivery == "local" {
+		if localPath, err = saveLocalMedia(localMediaRoot(), media, media.Name); err != nil {
+			log.Error().Err(err).Msg("Failed to keep media locally")
+		}
+	}
 	retained = mycli.attachDownloadedMedia(ctx, media, mimeType, chatJID, messageID, isIncoming, s3cfg, postmap)
 
 	for k, v := range extraKeys {
 		postmap[k] = v
 	}
 	log.Info().Int64("size", media.Size).Msg("Media processed")
+	return localPath
 }
 
 // Returns whether the event now owns media; S3-only consumers finish inline.
