@@ -134,14 +134,17 @@ func newStdioServerWithIO(s *server, stdin io.Reader, stdout io.Writer) *stdioSe
 	}
 }
 
+// maxStdioLineSize is the largest JSON-RPC request line accepted on stdin.
+const maxStdioLineSize = 100 * 1024 * 1024 // 100MB
+
 func (ss *stdioServer) Start() error {
 	log.Info().Msg("Starting stdio mode - reading JSON requests from stdin")
 
 	scanner := bufio.NewScanner(ss.stdin)
 
-	const maxCapacity = 512 * 1024 // 512KB
-	buf := make([]byte, maxCapacity)
-	scanner.Buffer(buf, maxCapacity)
+	// Media is sent base64-encoded on a single line, so the cap must fit
+	// a large attachment. The buffer starts small and grows on demand.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxStdioLineSize)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()

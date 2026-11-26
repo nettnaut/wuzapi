@@ -36,6 +36,24 @@ func TestStdioHealthRequest(t *testing.T) {
 	}
 }
 
+// TestStdioLargeRequestLine guards against the stdin reader rejecting a
+// long line. Media is sent base64-encoded on one line; a too-small scanner
+// cap made Start() return "token too long" and the process exit with code 1.
+func TestStdioLargeRequestLine(t *testing.T) {
+	s := makeTestServer(t)
+
+	padding := strings.Repeat("A", 2*1024*1024) // 2MB, well over the old 512KB cap
+	request := newRequest("big-001", "health", map[string]interface{}{"padding": padding}).toJSON(t)
+	response := executeRequest(t, s, request)
+
+	if response["id"] != "big-001" {
+		t.Errorf("Expected id big-001, got %v", response["id"])
+	}
+	if response["error"] != nil {
+		t.Errorf("Expected no error, got: %v", response["error"])
+	}
+}
+
 func TestAdminUsersAddAndList(t *testing.T) {
 	s := makeTestServer(t)
 
