@@ -242,7 +242,7 @@ func getUserWebhookUrl(token string) string {
 	webhookurl := ""
 	myuserinfo, found := userinfocache.Get(token)
 	if !found {
-		log.Warn().Str("token", token).Msg("Could not call webhook as there is no user for this token")
+		log.Warn().Str("token", redactToken(token)).Msg("Could not call webhook as there is no user for this token")
 	} else {
 		webhookurl = myuserinfo.(Values).Get("Webhook")
 	}
@@ -358,7 +358,7 @@ func (s *server) connectOnStartup() {
 				hmacKeyEncrypted = base64.StdEncoding.EncodeToString(hmac_key)
 			}
 
-			log.Info().Str("token", token).Msg("Connect to Whatsapp on startup")
+			log.Info().Str("token", redactToken(token)).Msg("Connect to Whatsapp on startup")
 			v := Values{map[string]string{
 				"Id":               txtid,
 				"Name":             name,
@@ -977,7 +977,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			}
 		}
 	case *events.PairSuccess:
-		log.Info().Str("userid", mycli.userID).Str("token", mycli.token).Str("ID", evt.ID.String()).Str("BusinessName", evt.BusinessName).Str("Platform", evt.Platform).Msg("QR Pair Success")
+		log.Info().Str("userid", mycli.userID).Str("token", redactToken(mycli.token)).Str("ID", evt.ID.String()).Str("BusinessName", evt.BusinessName).Str("Platform", evt.Platform).Msg("QR Pair Success")
 		jidStr := evt.ID.String()
 		if mycli.WAClient.Store != nil && mycli.WAClient.Store.ID != nil {
 			jidStr = mycli.WAClient.Store.ID.ToNonAD().String()
@@ -1000,7 +1000,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			token := myuserinfo.(Values).Get("Token")
 			v := updateUserInfo(myuserinfo, "Jid", jidStr)
 			userinfocache.Set(token, v, cache.NoExpiration)
-			log.Info().Str("jid", jidStr).Str("userid", txtid).Str("token", token).Msg("User information set")
+			log.Info().Str("jid", jidStr).Str("userid", txtid).Str("token", redactToken(token)).Msg("User information set")
 		}
 
 	case *events.StreamReplaced:

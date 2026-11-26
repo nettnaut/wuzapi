@@ -926,7 +926,7 @@ func (s *server) GetStatus() http.HandlerFunc {
 			Str("Jid", userInfo.Get("Jid")).
 			Str("Name", userInfo.Get("Name")).
 			Str("Webhook", userInfo.Get("Webhook")).
-			Str("Token", userInfo.Get("Token")).
+			Str("Token", redactToken(userInfo.Get("Token"))).
 			Str("Events", userInfo.Get("Events")).
 			Str("Proxy", userInfo.Get("Proxy")).
 			Str("History", userInfo.Get("History")).
@@ -5759,8 +5759,11 @@ func (s *server) AddUser() http.HandlerFunc {
 			}
 		}
 
-		log.Info().Interface("proxyConfig", user.ProxyConfig).Interface("s3Config", user.S3Config).Msg("Received values for proxyConfig and s3Config")
-		log.Debug().Interface("user", user).Msg("Received values for user")
+		log.Info().Interface("proxyConfig", user.ProxyConfig).Interface("s3Config", redactS3Config(user.S3Config)).Msg("Received values for proxyConfig and s3Config")
+		loggedUser := user
+		loggedUser.Token = redactToken(loggedUser.Token)
+		loggedUser.S3Config = redactS3Config(loggedUser.S3Config)
+		log.Debug().Interface("user", loggedUser).Msg("Received values for user")
 
 		// Set defaults only if nil
 		if user.Events == "" {
@@ -5960,8 +5963,11 @@ func (s *server) EditUser() http.HandlerFunc {
 			}
 		}
 
-		log.Info().Interface("proxyConfig", user.ProxyConfig).Interface("s3Config", user.S3Config).Msg("Received values for proxyConfig and s3Config")
-		log.Debug().Interface("user", user).Msg("Received values for user")
+		log.Info().Interface("proxyConfig", user.ProxyConfig).Interface("s3Config", redactS3Config(user.S3Config)).Msg("Received values for proxyConfig and s3Config")
+		loggedUser := user
+		loggedUser.Token = redactToken(loggedUser.Token)
+		loggedUser.S3Config = redactS3Config(loggedUser.S3Config)
+		log.Debug().Interface("user", loggedUser).Msg("Received values for user")
 
 		// Check if user exists
 		var count int
@@ -6918,7 +6924,7 @@ func (s *server) GetHistory() http.HandlerFunc {
 		if historyLimit == 0 {
 			// Before returning error, try refreshing the cache in case the DB was updated
 			token := r.Context().Value("userinfo").(Values).Get("Token")
-			log.Info().Str("userId", txtid).Str("token", token).Msg("History is 0, invalidating cache and trying fresh DB lookup")
+			log.Info().Str("userId", txtid).Str("token", redactToken(token)).Msg("History is 0, invalidating cache and trying fresh DB lookup")
 			userinfocache.Delete(token)
 
 			// Re-fetch from database
