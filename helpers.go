@@ -892,3 +892,24 @@ func writeChunk(buf *bytes.Buffer, tag string, data []byte) {
 		buf.WriteByte(0)
 	}
 }
+
+// redactToken masks a user token for logging. Tokens authenticate every
+// API call, so logs must never carry them in full; keep a short prefix so
+// log lines can still be correlated with a user.
+func redactToken(token string) string {
+	if len(token) <= 4 {
+		return strings.Repeat("*", len(token))
+	}
+	return token[:4] + "…"
+}
+
+// redactS3Config returns a copy of cfg with its credentials masked, for logging.
+func redactS3Config(cfg *S3Config) *S3Config {
+	if cfg == nil {
+		return nil
+	}
+	c := *cfg
+	c.AccessKey = redactToken(c.AccessKey)
+	c.SecretKey = redactToken(c.SecretKey)
+	return &c
+}
